@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Font Triangulator - Pro Custom Data</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 複数のCDNからライブラリをロード -->
+    <script src="https://unpkg.com/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <script src="https://unpkg.com/earcut@2.2.4/dist/earcut.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; overflow-x: hidden; }
+        .canvas-container { position: relative; width: 100%; height: 500px; background: #1e293b; border-radius: 12px; overflow: hidden; border: 2px dashed #334155; }
+        canvas { width: 100%; height: 100%; touch-action: none; }
+        .control-panel { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(10px); }
+        input[type="range"] { -webkit-appearance: none; appearance: none; background: #334155; height: 6px; border-radius: 3px; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; background: #22d3ee; cursor: pointer; border-radius: 50%; border: 2px solid #0f172a; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto space-y-6">
+        <header class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <h1 class="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Font Triangulator</h1>
+                <p class="text-slate-400 text-sm">幾何学的メッシュ生成ツール <span class="text-xs opacity-50">v5.0 (Multi-Char Sync)</span></p>
+            </div>
+            <div class="flex items-center gap-4">
+                <label class="cursor-pointer bg-cyan-600 hover:bg-cyan-500 px-4 py-2 rounded-lg transition text-sm font-semibold shadow-lg shadow-cyan-900/20">
+                    <span>フォントを選択 (.ttf / .otf)</span>
+                    <input type="file" id="fontInput" class="hidden" accept=".ttf,.otf">
+                </label>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div class="lg:col-span-1 space-y-4 control-panel p-6 rounded-xl border border-slate-700">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">表示テキスト</label>
+                    <input type="text" id="textInput" value="こんにちわ" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 focus:ring-2 focus:ring-cyan-500 outline-none text-white text-lg">
+                </div>
+
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500">分割精度</label>
+                        <span id="resValue" class="text-[10px] text-cyan-400 font-mono bg-cyan-950 px-2 py-0.5 rounded">Normal</span>
+                    </div>
+                    <input type="range" id="resolutionInput" min="0" max="10" step="1" value="2" class="w-full cursor-pointer">
+                    <div class="flex justify-between text-[8px] text-slate-500 mt-1 uppercase">
+                        <span>極限削り(0)</span>
+                        <span>高精度(10)</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-2 border-t border-slate-800 mt-2">
+                    <span class="text-sm text-slate-300">ワイヤーフレーム</span>
+                    <input type="checkbox" id="wireframeToggle" checked class="w-5 h-5 rounded bg-slate-800 border-slate-700 text-cyan-500 cursor-pointer">
+                </div>
+
+                <div class="pt-4 border-t border-slate-700 mt-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500">12桁データ (文字別/100分割)</label>
+                        <span id="triangleCount" class="text-[10px] text-slate-400">0 Triangles</span>
+                    </div>
+                    <textarea id="dataOutput" readonly placeholder="三角形データがここに出力されます" class="w-full h-48 bg-slate-900 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-cyan-300/80 resize-none outline-none leading-relaxed"></textarea>
+                    <button id="copyDataBtn" class="w-full mt-2 bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-400 text-xs py-2 rounded border border-cyan-800/50 transition">データをコピー</button>
+                </div>
+            </div>
+
+            <div class="lg:col-span-3 space-y-4">
+                <div id="dropZone" class="canvas-container shadow-2xl">
+                    <canvas id="mainCanvas"></canvas>
+                    <div id="loadingOverlay" class="absolute inset-0 bg-slate-900/80 flex flex-col items-center justify-center hidden">
+                        <div class="text-cyan-400 animate-pulse text-sm font-medium mb-2">Font Data Processing...</div>
+                        <div id="loadingStatus" class="text-slate-500 text-[10px]">Connecting to font server...</div>
+                    </div>
+                </div>
+                <div class="p-4 bg-slate-800/50 rounded-lg border border-slate-700 text-xs text-slate-400 leading-relaxed">
+                    <strong class="text-slate-200">Tips:</strong> ネットワーク制限で初期フォントが読み込めない場合は、お手持ちのフォントファイルを上のボタンから選択するか、ここにドラッグ＆ドロップしてください。
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const textInput = document.getElementById('textInput');
+        const resolutionInput = document.getElementById('resolutionInput');
+        const wireframeToggle = document.getElementById('wireframeToggle');
+        const fontInput = document.getElementById('fontInput');
+        const dataOutput = document.getElementById('dataOutput');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingStatus = document.getElementById('loadingStatus');
+        const triangleCountDisplay = document.getElementById('triangleCount');
+
+        let currentFont = null;
+        let triangleData = []; // [{char: 'A', triangles: [...], bounds: {}}, ...]
+
+        // 日本語対応フォントの安定した供給元（M PLUS 1pなどを優先）
+        const FONT_SOURCES = [
+            // M PLUS 1p (GitHub via jsDelivr - 非常に安定)
+            'https://cdn.jsdelivr.net/gh/googlefonts/mplus-fonts@master/fonts/ttf/M PLUS 1p Regular.ttf',
+            // Noto Sans JP (別の安定したミラー)
+            'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf',
+            // Inter (Fallback)
+            'https://cdn.jsdelivr.net/gh/googlefonts/inter@master/fonts/ttf/Inter-Regular.ttf'
+        ];
+
+        function getContours(commands, steps) {
+            const contours = [];
+            let currentContour = [];
+            
+            commands.forEach(cmd => {
+                const isCurve = (cmd.type === 'Q' || cmd.type === 'C');
+                // 精度0の場合、曲線セグメントの頂点をスキップ
+                const skipFactor = (steps === 0 && isCurve) ? 2 : 1;
+
+                switch (cmd.type) {
+                    case 'M':
+                        if (currentContour.length > 0) contours.push(currentContour);
+                        currentContour = [{x: cmd.x, y: cmd.y}];
+                        break;
+                    case 'L':
+                        currentContour.push({x: cmd.x, y: cmd.y});
+                        break;
+                    case 'Q':
+                        // 2次ベジェ: steps=0の時はスキップ気味に
+                        for (let i = 1; i <= steps; i += skipFactor) {
+                            const t = i / Math.max(1, steps);
+                            const x = (1-t)*(1-t)*cmd.x1 + 2*(1-t)*t*cmd.x1 + t*t*cmd.x;
+                            const y = (1-t)*(1-t)*cmd.y1 + 2*(1-t)*t*cmd.y1 + t*t*cmd.y;
+                            currentContour.push({x, y});
+                        }
+                        currentContour.push({x: cmd.x, y: cmd.y});
+                        break;
+                    case 'C':
+                        // 3次ベジェ
+                        for (let i = 1; i <= steps; i += skipFactor) {
+                            const t = i / Math.max(1, steps);
+                            const x = Math.pow(1-t,3)*cmd.x1 + 3*Math.pow(1-t,2)*t*cmd.x1 + 3*(1-t)*t*t*cmd.x2 + t*t*t*cmd.x;
+                            const y = Math.pow(1-t,3)*cmd.y1 + 3*Math.pow(1-t,2)*t*cmd.y1 + 3*(1-t)*t*t*cmd.y2 + t*t*t*cmd.y;
+                            currentContour.push({x, y});
+                        }
+                        currentContour.push({x: cmd.x, y: cmd.y});
+                        break;
+                    case 'Z':
+                        if (currentContour.length > 0) {
+                            contours.push(currentContour);
+                            currentContour = [];
+                        }
+                        break;
+                }
+            });
+            if (currentContour.length > 0) contours.push(currentContour);
+            return contours;
+        }
+
+        function getSignedArea(points) {
+            let area = 0;
+            for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+                area += points[j].x * points[i].y - points[i].x * points[j].y;
+            }
+            return area / 2;
+        }
+
+        function getBBox(points) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            points.forEach(p => {
+                if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+            });
+            return { minX, minY, maxX, maxY };
+        }
+
+        function isInside(inner, outer) {
+            // 単純化したBBoxによる包含判定
+            return inner.minX > outer.minX && inner.maxX < outer.maxX &&
+                   inner.minY > outer.minY && inner.maxY < outer.maxY;
+        }
+
+        function updateTriangulation() {
+            if (!currentFont || typeof earcut === 'undefined') return;
+
+            const text = textInput.value || " ";
+            const fontSize = 160; 
+            const steps = parseInt(resolutionInput.value); 
+            
+            const labels = ["Abstract (Clipped Curves)", "Low Poly", "Normal", "Detail", "High", "Smooth"];
+            document.getElementById('resValue').innerText = steps === 0 ? labels[0] : (steps < 2 ? labels[1] : labels[2]);
+
+            const glyphs = currentFont.stringToGlyphs(text);
+            triangleData = []; 
+            let totalTriangles = 0;
+
+            const scale = canvas.width / 1000;
+            let xOffset = 40 * scale;
+            let yOffset = canvas.height / 2 + 50;
+
+            glyphs.forEach(glyph => {
+                const charTriangles = [];
+                const gPath = glyph.getPath(xOffset, yOffset, fontSize * scale);
+                const rawContours = getContours(gPath.commands, steps);
+                
+                if (rawContours.length > 0) {
+                    const processed = rawContours.map(pts => {
+                        const area = getSignedArea(pts);
+                        return { points: pts, area: Math.abs(area), isHole: area > 0, bbox: getBBox(pts) };
+                    }).sort((a, b) => b.area - a.area);
+
+                    const shapes = [];
+                    processed.forEach(c => {
+                        let parent = null;
+                        for (const s of shapes) { if (isInside(c.bbox, s.shellBBox)) parent = s; }
+                        if (parent) parent.holes.push(c.points);
+                        else shapes.push({ shell: c.points, shellBBox: c.bbox, holes: [] });
+                    });
+
+                    shapes.forEach(shape => {
+                        const flatPoints = [];
+                        const holeIndices = [];
+                        let curIdx = 0;
+                        shape.shell.forEach(p => { flatPoints.push(p.x, p.y); curIdx++; });
+                        shape.holes.forEach(hole => {
+                            holeIndices.push(curIdx);
+                            hole.forEach(p => { flatPoints.push(p.x, p.y); curIdx++; });
+                        });
+                        
+                        try {
+                            const indices = earcut(flatPoints, holeIndices);
+                            for (let i = 0; i < indices.length; i += 3) {
+                                charTriangles.push([
+                                    {x: flatPoints[indices[i]*2], y: flatPoints[indices[i]*2+1]},
+                                    {x: flatPoints[indices[i+1]*2], y: flatPoints[indices[i+1]*2+1]},
+                                    {x: flatPoints[indices[i+2]*2], y: flatPoints[indices[i+2]*2+1]}
+                                ]);
+                                totalTriangles++;
+                            }
+                        } catch(e) { console.warn("Earcut skip"); }
+                    });
+                }
+                
+                triangleData.push({
+                    char: glyph.unicode ? String.fromCharCode(glyph.unicode) : (glyph.name || '?'),
+                    triangles: charTriangles
+                });
+                xOffset += glyph.advanceWidth * (fontSize * scale / currentFont.unitsPerEm);
+            });
+
+            triangleCountDisplay.innerText = `${totalTriangles} Triangles`;
+            generateDataString();
+            draw();
+        }
+
+        function generateDataString() {
+            let result = "";
+            triangleData.forEach(item => {
+                if (item.triangles.length === 0) return;
+                
+                // 文字ごとの正規化
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                item.triangles.forEach(tri => tri.forEach(p => {
+                    if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+                    if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+                }));
+
+                const w = maxX - minX || 1;
+                const h = maxY - minY || 1;
+
+                result += `/* ${item.char} */\n`;
+                item.triangles.forEach(tri => {
+                    tri.forEach(p => {
+                        const nx = Math.min(99, Math.max(0, Math.floor(((p.x - minX) / w) * 99)));
+                        const ny = Math.min(99, Math.max(0, Math.floor(((p.y - minY) / h) * 99)));
+                        result += nx.toString().padStart(2, '0') + ny.toString().padStart(2, '0');
+                    });
+                });
+                result += "\n\n";
+            });
+            dataOutput.value = result.trim();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (!currentFont) {
+                ctx.fillStyle = "#475569";
+                ctx.textAlign = "center";
+                ctx.font = "14px Inter";
+                ctx.fillText("フォントを読み込んでください...", canvas.width/2, canvas.height/2);
+                return;
+            }
+
+            triangleData.forEach(item => {
+                item.triangles.forEach(tri => {
+                    ctx.beginPath();
+                    ctx.moveTo(tri[0].x, tri[0].y);
+                    ctx.lineTo(tri[1].x, tri[1].y);
+                    ctx.lineTo(tri[2].x, tri[2].y);
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(34, 211, 238, 0.1)';
+                    ctx.fill();
+                    if (wireframeToggle.checked) {
+                        ctx.strokeStyle = '#22d3ee';
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+                    }
+                });
+            });
+        }
+
+        async function loadFontWithFallback(sources, index = 0) {
+            if (index >= sources.length) {
+                loadingOverlay.classList.add('hidden');
+                draw(); 
+                return;
+            }
+
+            loadingOverlay.classList.remove('hidden');
+            loadingStatus.innerText = `Loading Japanese Font (Source ${index + 1})...`;
+
+            try {
+                const res = await fetch(sources[index], { mode: 'cors' });
+                if (!res.ok) throw new Error("Fetch Failed");
+                const buf = await res.arrayBuffer();
+                currentFont = opentype.parse(buf);
+                loadingOverlay.classList.add('hidden');
+                updateTriangulation();
+            } catch(e) {
+                console.warn(`Font source ${index} failed, trying next...`);
+                loadFontWithFallback(sources, index + 1);
+            }
+        }
+
+        fontInput.addEventListener('change', e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = evt => {
+                try {
+                    currentFont = opentype.parse(evt.target.result);
+                    updateTriangulation();
+                } catch(err) { alert("無効なフォント形式です"); }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        document.getElementById('copyDataBtn').addEventListener('click', () => {
+            dataOutput.select();
+            document.execCommand('copy');
+            const b = document.getElementById('copyDataBtn');
+            const old = b.innerText; b.innerText = "COPIED!";
+            setTimeout(() => b.innerText = old, 2000);
+        });
+
+        // ドラッグ＆ドロップ対応
+        const dropZone = document.getElementById('dropZone');
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = "#22d3ee"; });
+        dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = "#334155"; });
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.style.borderColor = "#334155";
+            const file = e.dataTransfer.files[0];
+            if (file && (file.name.endsWith('.ttf') || file.name.endsWith('.otf'))) {
+                const reader = new FileReader();
+                reader.onload = evt => {
+                    currentFont = opentype.parse(evt.target.result);
+                    updateTriangulation();
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            updateTriangulation();
+        });
+
+        textInput.addEventListener('input', updateTriangulation);
+        resolutionInput.addEventListener('input', updateTriangulation);
+        wireframeToggle.addEventListener('change', draw);
+
+        window.onload = () => {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            // 最初にフォント取得を試みる
+            loadFontWithFallback(FONT_SOURCES);
+        };
+    </script>
+</body>
+</html>
